@@ -1,0 +1,12 @@
+[package]
+
+name = "rayview"
+version = "0.0.1"
+authors = [ "Your name <you@example.com>" ]
+edition = "2021"
+
+[dependencies]
+nom = { version = "7", features = ["alloc"] }
+
+[profile.release]
+opt-level = 3
