@@ -10,6 +10,10 @@ use nom::error::Error;
 use nom::multi::count;
 use nom::number::complete::{le_u32, le_u16, le_u8, le_f32};
 
+//see families and object_type let next =
+//code for linked list handling pattern
+//see states for another style
+
 struct TextureInfo {
     field0: u32,
     field4: u16,
@@ -100,6 +104,24 @@ struct VisualMaterial {
 
 }
 
+struct Family {
+    offset: u32,
+    off_family_next: u32,
+    off_family_prev: u32,
+    off_family_hdr: u32,
+    family_index: u32,
+    name: String
+}
+
+struct Transition {
+    offset: u32,
+    off_transition_next: u32,
+    off_targetState: u32,
+    off_stateToGo: u32,
+    linkingType: u8
+    //3 more bytes unknown?
+}
+
 //loader {
 // textures
 // lightmapTextures
@@ -176,7 +198,7 @@ fn main() {
         off_always_reusableUnknown2: off_always_reusableUnknown2 as usize
     };
 
-    let (remain, object_names) = count(|x| object_type_list(x, &mainlvlbuffer), 3)(remain).expect("died");
+    let (remain, objectTypes) = count(|x| object_type_list(x, &mainlvlbuffer), 3)(remain).expect("died");
 
     let (remain, off_light) = le_u32::<_, Error<_>>(remain).expect("died");
     let (remain, off_characterLaunchingSoundEvents) = le_u32::<_, Error<_>>(remain).expect("died");
@@ -255,8 +277,305 @@ fn main() {
     //no transit
 
     //Read Families
+    let fm = &mainlvlbuffer[(off_families_head as usize + 4)..];
+    let (_, families) = count(|x| families(x, &mainlvlbuffer, &objectTypes), off_families_num_elements as usize)(fm).expect("died");
 
 
+
+
+}
+
+fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectType>>) -> IResult<&'a[u8], Family> {
+    
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_family_next) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_family_prev) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_family_hdr) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, family_index) = le_u32::<_, Error<_>>(input)?;
+    let name = objectTypes[0][family_index as usize].name.clone();
+
+    let (input, off_state_head) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_state_tail) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_state_num_elements) = le_u32::<_, Error<_>>(input)?;
+
+    let state = &buffer[(off_state_head as usize + 4)..];
+    let (_, states) = count(|x| states(x, &buffer), off_state_num_elements as usize)(state)?;
+
+    let (input, off_preloadAnim_head) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_preloadAnim_tail) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_preloadAnim_num_elements) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_physical_list_default) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_objectLists_head) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_objectLists_tail) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_objectLists_num_elements) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_bounding_volume) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+
+    let (input, animBank) = le_u8::<_, Error<_>>(input)?;
+    let (input, properties) = le_u8::<_, Error<_>>(input)?;
+
+    let next = &buffer[(off_family_next as usize + 4)..];
+    Ok((next, Family {
+        offset: offset as u32,
+        off_family_next: off_family_next,
+        off_family_prev: off_family_prev,
+        off_family_hdr: off_family_hdr,
+        family_index: family_index,
+        name: name
+    }))
+}
+
+struct State {
+    offset: u32,
+    //family_index: u32,
+    //index: u32
+    off_state_next: u32,
+    off_anim_ref: u32,
+    transitions: Vec<Transition>,
+    prohibitStates: Vec<Prohibit>,
+    off_nextState: u32,
+    off_mechanicsIdCard: u32,
+    off_cine_mapname: u32,
+    off_cine_name: u32,
+    speed: u8,
+    customStateBits: u8,
+    mechanicsIDCard: Option<MechanicsIdCard>,
+    cine_mapname: Option<String>,
+    cine_name: Option<String>,
+    anim_ref: AnimationReference
+}
+
+fn states<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], State> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+    let (input, off_state_next) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_anim_ref) = le_u32::<_, Error<_>>(input)?;
+
+    //list stuff
+    let (input, off_transitions_head) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_transitions_tail) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_transitions_num_elements) = le_u32::<_, Error<_>>(input)?;
+    let transition = &buffer[(off_transitions_head as usize + 4)..];
+    let (_, transitions) = count(|x| transitions(x, &buffer), off_transitions_num_elements as usize)(transition)?;
+
+    //list stuff
+    let (input, off_prohibitStates_head) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_prohibitStates_tail) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_prohibitStates_num_elements) = le_u32::<_, Error<_>>(input)?;
+    let prohibit = &buffer[(off_prohibitStates_head as usize + 4)..];
+    let (_, prohibitStates) = count(|x| prohibitStates(x, &buffer), off_prohibitStates_num_elements as usize)(prohibit)?;
+
+    let (input, off_nextState) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_mechanicsIDCard) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_cine_mapname) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_cine_name) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+    let (input, speed) = le_u8::<_, Error<_>>(input)?;
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+    let (input, customStateBits) = le_u8::<_, Error<_>>(input)?;
+
+    //is this really optional in arena
+    let (input, mechanicsIDCard) = if off_mechanicsIDCard == 0 {
+        let idCard = &buffer[(off_mechanicsIDCard as usize + 4)..];
+        let (input, mechanicsIDCard) = mechanicsIdCard(idCard, buffer)?;
+        (input,Some(mechanicsIDCard))
+    } else {
+        (input, None)
+    };
+
+    //not sure cinemapname is ever populated in arena, but it does need handled
+    let (input, cine_mapname) = if off_cine_mapname == 0 {
+        let n = &buffer[(off_cine_mapname as usize + 4)..];
+        let (input, name) = map(take_while(|c| c != 0), |cs: &[u8]| String::from_utf8_lossy(cs).into_owned())(n)?;
+        (input, Some(name))
+    } else {
+        (input, None)
+    };
+
+    //not sure cine_name is ever populated in arena, but it does need handled
+    let (input, cine_name) = if off_cine_name == 0 {
+        let n = &buffer[(off_cine_name as usize + 4)..];
+        let (input, name) = map(take_while(|c| c != 0), |cs: &[u8]| String::from_utf8_lossy(cs).into_owned())(n)?;
+        (input, Some(name))
+    } else {
+        (input, None)
+    };
+
+    let anim = &buffer[(off_anim_ref as usize + 4)..];
+    let (input, anim_ref) = animationReference(anim, buffer)?;
+
+    let next = &buffer[(off_state_next as usize + 4)..];
+    Ok((next, State {
+        offset: offset as u32,
+        off_state_next: off_state_next,
+        off_anim_ref: off_anim_ref,
+        transitions: transitions,
+        prohibitStates: prohibitStates,
+        off_nextState: off_nextState,
+        off_mechanicsIdCard: off_mechanicsIDCard,
+        off_cine_mapname: off_cine_mapname,
+        off_cine_name: off_cine_name,
+        speed: speed,
+        customStateBits: customStateBits,
+        mechanicsIDCard: mechanicsIDCard,
+        cine_mapname: cine_mapname,
+        cine_name: cine_name,
+        anim_ref: anim_ref
+    }))
+}
+
+struct AnimationReference {
+    offset: u32,
+    num_onlyFrames: u16,
+    speed: u8,
+    num_channels: u8,
+    off_events: u32,
+    off_morphData: u32,
+    anim_index: u16,
+    num_events: u8,
+    transition: u8
+}
+
+fn animationReference<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], AnimationReference> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, num_onlyFrames) = le_u16::<_, Error<_>>(input)?;
+    let (input, speed) = le_u8::<_, Error<_>>(input)?;
+    let (input, num_channels) = le_u8::<_, Error<_>>(input)?;
+    let (input, off_events) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_morphData) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, anim_index) = le_u16::<_, Error<_>>(input)?;
+    let (input, num_events) = le_u8::<_, Error<_>>(input)?;
+    let (input, transition) = le_u8::<_, Error<_>>(input)?;
+
+    //off_a3d and AnimA3DGeneral seems to not apply to arena
+
+    Ok((input, AnimationReference {
+        offset: offset as u32,
+        num_onlyFrames: num_onlyFrames,
+        speed: speed,
+        num_channels: num_channels,
+        off_events: off_events,
+        off_morphData: off_morphData,
+        anim_index: anim_index,
+        num_events: num_events,
+        transition: transition
+    }))
+}
+
+struct MechanicsIdCard {
+    offset: u32,
+    idtype: u32,
+    flags: u32,
+    gravity: f32,
+    maxRebound: f32,
+    slopeLimit: f32,
+    inertia: (f32, f32, f32),
+    tiltIntensity: f32,
+    tiltInertia: f32,
+    tiltOrigin: f32,
+    maxInertia: (f32, f32, f32)
+}
+
+fn mechanicsIdCard<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], MechanicsIdCard> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, idtype) = le_u32::<_, Error<_>>(input)?;
+    let (input, flags) = le_u32::<_, Error<_>>(input)?;
+    let (input, gravity) = le_f32::<_, Error<_>>(input)?;
+    let (input, maxRebound) = le_f32::<_, Error<_>>(input)?;
+    //tuple is in file as x z y
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+    let (input, slopeLimit) = le_f32::<_, Error<_>>(input)?;
+    let (input, inertia) = tuple((le_f32, le_f32, le_f32))(input)?;
+    let (input, tiltIntensity) = le_f32::<_, Error<_>>(input)?;
+    let (input, tiltInertia) = le_f32::<_, Error<_>>(input)?;
+    let (input, tiltOrigin) = le_f32::<_, Error<_>>(input)?;
+    //tuple is in file as x z y
+    let (input, maxInertia) = tuple((le_f32, le_f32, le_f32))(input)?;
+
+    Ok((input, MechanicsIdCard {
+        offset: offset as u32,
+        idtype: idtype,
+        flags: flags,
+        gravity: gravity,
+        maxRebound: maxRebound,
+        slopeLimit: slopeLimit,
+        inertia: inertia,
+        tiltIntensity: tiltIntensity,
+        tiltInertia: tiltInertia,
+        tiltOrigin: tiltOrigin,
+        maxInertia: maxInertia
+    }))
+}
+
+struct Prohibit {
+    offset: u32,
+    off_prohibit_next: u32,
+    off_state: u32
+}
+
+//this is never used in shrine
+fn prohibitStates<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], Prohibit> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_prohibit_next) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_state) = le_u32::<_, Error<_>>(input)?;
+
+    let next = &buffer[(off_prohibit_next as usize + 4)..];
+    Ok((next, Prohibit {
+        offset: offset as u32,
+        off_prohibit_next: off_prohibit_next,
+        off_state: off_state
+    }))
+}
+
+fn transitions<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], Transition> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_transition_next) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_targetState) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_stateToGo) = le_u32::<_, Error<_>>(input)?;
+    let (input, linkingType) = le_u8::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+    let (input, _) = le_u8::<_, Error<_>>(input)?;
+
+    let next = &buffer[(off_transition_next as usize + 4)..];
+    Ok((next, Transition {
+        offset: offset as u32,
+        off_transition_next: off_transition_next,
+        off_targetState: off_targetState,
+        off_stateToGo: off_stateToGo,
+        linkingType: linkingType
+    }))
 }
 
 fn visual_material<'a>(input: &'a[u8], buffer: &'a[u8], buffers: &'a[&Vec<u8>; 2], pointers: &HashMap<usize, usize>) -> IResult<&'a[u8], VisualMaterial> {
