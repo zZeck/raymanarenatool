@@ -281,8 +281,6 @@ fn main() {
     let (_, families) = count(|x| families(x, &mainlvlbuffer, &objectTypes), off_families_num_elements as usize)(fm).expect("died");
 
 
-
-
 }
 
 fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectType>>) -> IResult<&'a[u8], Family> {
@@ -305,6 +303,7 @@ fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectTyp
     let state = &buffer[(off_state_head as usize + 4)..];
     let (_, states) = count(|x| states(x, &buffer), off_state_num_elements as usize)(state)?;
 
+    //list not parsed in raymap?
     let (input, off_preloadAnim_head) = le_u32::<_, Error<_>>(input)?;
     let (input, off_preloadAnim_tail) = le_u32::<_, Error<_>>(input)?;
     let (input, off_preloadAnim_num_elements) = le_u32::<_, Error<_>>(input)?;
@@ -315,6 +314,10 @@ fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectTyp
     let (input, off_objectLists_tail) = le_u32::<_, Error<_>>(input)?;
     let (input, off_objectLists_num_elements) = le_u32::<_, Error<_>>(input)?;
 
+    let objectList = &buffer[(off_objectLists_head as usize + 4)..];
+    let (_, objectLists) = count(|x| object_Lists(x, &buffer), off_objectLists_num_elements as usize)(objectList)?;
+
+
     let (input, off_bounding_volume) = le_u32::<_, Error<_>>(input)?;
 
     let (input, _) = le_u32::<_, Error<_>>(input)?;
@@ -323,6 +326,8 @@ fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectTyp
 
     let (input, animBank) = le_u8::<_, Error<_>>(input)?;
     let (input, properties) = le_u8::<_, Error<_>>(input)?;
+
+
 
     let next = &buffer[(off_family_next as usize + 4)..];
     Ok((next, Family {
@@ -333,6 +338,177 @@ fn families<'a>(input: &'a[u8], buffer: &'a[u8], objectTypes: &Vec<Vec<ObjectTyp
         family_index: family_index,
         name: name
     }))
+}
+
+fn object_Lists<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_objList_next) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_objList_start) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_objList_2) = le_u32::<_, Error<_>>(input)?;
+    let (input, num_entries) = le_u16::<_, Error<_>>(input)?;
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+
+    let objectListEntr = &buffer[(off_objList_start as usize + 4)..];
+    let (_, objectListEntry) = count(|x| object_List_entry(x, &buffer), num_entries as usize)(objectListEntr)?;
+
+    Ok((input, 0))
+}
+
+fn object_List_entry<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_scale) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_po) = le_u32::<_, Error<_>>(input)?;
+    let (input, thirdvalue) = le_u32::<_, Error<_>>(input)?;
+    let (input, unk0) = le_u16::<_, Error<_>>(input)?;
+    let (input, unk1) = le_u16::<_, Error<_>>(input)?;
+
+    let (input, lastValue) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, x) = if lastValue != 0 && thirdvalue != 0 {
+        let sca = &buffer[(off_scale as usize + 4)..];
+        //stream byte order is x z y
+        let (_, scale) = tuple((le_f32, le_f32, le_f32))(sca)?;
+
+        let sca = &buffer[(off_po as usize + 4)..];
+        let (input, po) = physical_object(input, buffer)?;
+
+        (input, Some((scale, po)))
+    } else {
+        (input, None)
+    };
+
+    Ok((input, 0))
+}
+
+struct VisualSetLOD {
+    LODdistance: f32,
+    off_data: u32
+    //geometric obj?
+}
+
+fn physical_object<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_visualSet) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_collideSet) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_visualBoundingVolume) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_collideBoundingVolume) = le_u32::<_, Error<_>>(input)?;
+
+    let visSet = &buffer[(off_visualSet as usize + 4)..];
+    let (visSet, _) = le_u32::<_, Error<_>>(visSet)?;
+    let (visSet, numberOfLOD) = le_u16::<_, Error<_>>(visSet)?;
+    let (visSet, visualSetType) = le_u16::<_, Error<_>>(visSet)?;
+
+    let (visSet, x) = if numberOfLOD > 0 {
+        let (visSet, off_LODDistances) = le_u32::<_, Error<_>>(visSet)?;
+        let (visSet, off_LODDataOffsets) = le_u32::<_, Error<_>>(visSet)?;
+        let lod = &buffer[(off_LODDistances as usize + 4)..];
+
+        let (_, lods) = count(le_f32, numberOfLOD as usize)(lod)?;
+
+        let loddat = &buffer[(off_LODDataOffsets as usize + 4)..];
+        let (_, loddats) = count(le_u32, numberOfLOD as usize)(loddat)?;
+
+        let fff = loddats.into_iter().map(|off_data| {
+            let dat = &buffer[(off_data as usize + 4)..];
+            let (_, obj) = match visualSetType {
+                0 => geometric_object(dat, buffer),
+                //1 => 1,
+                _ => Ok((dat, 0))
+            }.expect("died");// clean this up. probably some Nom map instead of iter map. lift to Result before op
+            (off_data, obj)
+        });
+
+        let blah = lods.into_iter().zip(fff).map(|(lod, (off, dat))| VisualSetLOD {LODdistance: lod, off_data: off}).collect();
+
+        (visSet, blah)
+    } else {
+        (visSet, Vec::new())
+    };
+
+
+    Ok((input, 0))
+}
+
+fn geometric_object<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_vertices) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_normals) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_blendWeights) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_element_types) = le_u32::<_, Error<_>>(input)?;
+    let (input, off_elements) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, off_parallelBoxes) = le_u32::<_, Error<_>>(input)?;
+
+    let (input, lookAtMode) = le_u32::<_, Error<_>>(input)?;
+    let (input, num_vertices) = le_u16::<_, Error<_>>(input)?;
+    let (input, num_elements) = le_u16::<_, Error<_>>(input)?;
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+    let (input, num_parallelBoxes) = le_u16::<_, Error<_>>(input)?;
+    let (input, sphereRadius) = le_f32::<_, Error<_>>(input)?;
+    //x z y in file
+    //new Vector3(sphereX, sphereY, sphereZ);
+    let (input, sphereCenter) = tuple((le_f32, le_f32, le_f32))(input)?;
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+    let (input, _) = le_u32::<_, Error<_>>(input)?;
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+
+    let vert = &buffer[(off_vertices as usize + 4)..];
+    let (_, vertices) = count(tuple((le_f32, le_f32, le_f32)), num_vertices as usize)(vert)?;
+
+    let norm = &buffer[(off_normals as usize + 4)..];
+    let (_, normals) = count(tuple((le_f32, le_f32, le_f32)), num_vertices as usize)(norm)?;
+
+    //validate this later, family phys obj geo objs don't have this for shrine.
+    let x = if off_blendWeights != 0 {
+        let weight = &buffer[(off_blendWeights as usize + 4)..];
+        //float[4][num_vertices]
+        let (_, blendWeights) = count(|x| {
+            let (x, off) = le_u32::<_, Error<_>>(x)?;
+            let w = &buffer[(off as usize + 4)..];
+            let (_, weights) = count(le_f32, num_vertices as usize)(w)?;
+            let (x, _) = le_u32::<_, Error<_>>(x)?;
+            let (x, _) = le_u32::<_, Error<_>>(x)?;
+            let (x, _) = le_u16::<_, Error<_>>(x)?;
+            let (x, _) = le_u16::<_, Error<_>>(x)?;
+            Ok((x, weights))
+        }, 4 as usize)(weight)?;
+
+        blendWeights
+    } else {
+        Vec::new()
+    };
+
+    let elem_typs = &buffer[(off_element_types as usize + 4)..];
+    let (_, element_types) = count(le_u16, num_elements as usize)(elem_typs)?;
+
+    let elem = &buffer[(off_elements as usize + 4)..];
+    let (_, elements) = count(|x| {
+        let (u, off) = le_u32::<_, Error<_>>(x)?;
+        let elem = &buffer[(off as usize + 4)..];
+        Ok((x, 0))
+    }, num_elements as usize)(elem)?;
+
+    Ok((input, 0))
 }
 
 struct State {
