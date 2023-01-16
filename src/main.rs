@@ -503,10 +503,93 @@ fn geometric_object<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8>
 
     let elem = &buffer[(off_elements as usize + 4)..];
     let (_, elements) = count(|x| {
-        let (u, off) = le_u32::<_, Error<_>>(x)?;
-        let elem = &buffer[(off as usize + 4)..];
-        Ok((x, 0))
+        let (next, off) = le_u32::<_, Error<_>>(x)?;
+
+        Ok((next, off))
     }, num_elements as usize)(elem)?;
+
+    let elements: Vec<u8> = element_types.into_iter().zip(elements).map(|(eltype, off)| {
+        let block = &buffer[(off as usize + 4)..];
+        let (_, element) = match eltype {
+            1 => geometric_object_element_triangle(block, buffer),
+            3 => geometric_object_element_sprite(block, buffer),
+            13 | 15 => deform_set(block, buffer),
+            _ => Ok((block, 0))
+        }.expect("died");//clean up
+
+        element
+    }).collect();
+
+    Ok((input, 0))
+}
+
+fn geometric_object_element_triangle<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+
+    Ok((input, 0))
+}
+
+fn geometric_object_element_sprite<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
+    let inptr = input.as_ptr() as usize;
+    let buffPtr = buffer.as_ptr() as usize;
+    let offset = inptr - buffPtr - 4;
+
+    let (input, off_sprites) = le_u32::<_, Error<_>>(input)?;
+    let (input, num_sprites) = le_u16::<_, Error<_>>(input)?;
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+    let (input, _) = le_u16::<_, Error<_>>(input)?;
+
+    let (input, x) = if off_sprites != 0 {
+        let block = &buffer[(off_sprites as usize + 4)..];
+
+        let (input, blah) = count(|y| {
+            let (y, off_info) = le_u32::<_, Error<_>>(y)?;
+            let (y, size) = tuple((le_f32, le_f32))(y)?;
+
+            let (y, constraint) = tuple((le_f32, le_f32, le_f32))(y)?;
+            let (y, uv1) = tuple((le_f32, le_f32))(y)?;
+            let (y, uv2) = tuple((le_f32, le_f32))(y)?;
+
+            let (y, centerPoint) = le_u16::<_, Error<_>>(y)?;
+            let (y, _) = le_u16::<_, Error<_>>(y)?;
+
+            let asdf = if off_info != 0 {
+                let block = &buffer[(off_info as usize + 4)..];
+
+                let (block, _) = le_u32::<_, Error<_>>(block)?;
+                let (block, _) = le_u32::<_, Error<_>>(block)?;
+                let (block, _) = le_u32::<_, Error<_>>(block)?;
+
+                let (block, off_info_scale) = le_u32::<_, Error<_>>(block)?;
+                let (block, off_info_unknown) = le_u32::<_, Error<_>>(block)?;
+                let (block, off_material_pointer) = le_u32::<_, Error<_>>(block)?;
+
+                let block = &buffer[(off_info_scale as usize + 4)..];
+                let (block, info_scale) = tuple((le_f32, le_f32))(block)?;
+
+                let block = &buffer[(off_info_unknown as usize + 4)..];
+                let (block, info_unknown) = tuple((le_f32, le_f32))(block)?;
+
+
+
+                0
+            } else {
+                0
+            };
+
+            Ok((y, 0))
+        }, num_sprites as usize)(block)?;
+
+        (input, blah)
+    } else {
+        (input, Vec::new())
+    };
+
+    Ok((input, 0))
+}
+
+fn deform_set<'a>(input: &'a[u8], buffer: &'a[u8]) -> IResult<&'a[u8], u8> {
 
     Ok((input, 0))
 }
